@@ -1,0 +1,46 @@
+name: Deploy to VM
+
+on:
+  push:
+    branches: [ "main", "master" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node (for any build steps; not strictly required)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Create SSH key
+        id: sshkey
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > key.pem
+          chmod 600 key.pem
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Upload code to VM (rsync)
+        run: |
+          rsync -az --delete -e "ssh -i key.pem -o StrictHostKeyChecking=yes" ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/helloapi-upload/"
+
+      - name: Run remote setup/deploy
+        run: |
+          ssh -i key.pem -o StrictHostKeyChecking=yes ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} '\
+            sudo mkdir -p /var/www/helloapi && \
+            sudo chown -R $USER:$USER /var/www/helloapi && \
+            rsync -a --delete --exclude ".git" --exclude ".github" --exclude "node_modules" ~/helloapi-upload/ /var/www/helloapi/ && \
+            cd /var/www/helloapi && \
+            if ! command -v node >/dev/null 2>&1; then \
+              curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt-get install -y nodejs; \
+            fi && \
+            sudo cp -f deploy/helloapi.service /etc/systemd/system/helloapi.service && \
+            npm ci --only=production || npm install --omit=dev && \
+            sudo systemctl daemon-reload && \
+            sudo systemctl enable helloapi && \
+            sudo systemctl restart helloapi && \
+            sudo systemctl status helloapi --no-pager -l || true \
+          '
