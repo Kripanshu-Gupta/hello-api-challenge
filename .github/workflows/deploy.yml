@@ -16,20 +16,32 @@ jobs:
         with:
           node-version: "20"
 
+      # This step creates the .ssh directory on the runner to prevent a "No such file or directory" error.
+      # It's a best practice to ensure the directory exists and has the correct permissions (700).
+      - name: Create .ssh directory
+        run: |
+          mkdir -p ~/.ssh/
+          chmod 700 ~/.ssh/
+
       - name: Create SSH key
         id: sshkey
         run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > key.pem
-          chmod 600 key.pem
+          # The key.pem file is written directly to the .ssh directory for better security and consistency.
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/key.pem
+          chmod 600 ~/.ssh/key.pem
+          # Adds the host to known_hosts to prevent a host key verification prompt during SSH connection.
+          # The key is also placed in the .ssh directory.
           ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
 
       - name: Upload code to VM (rsync)
         run: |
-          rsync -az --delete -e "ssh -i key.pem -o StrictHostKeyChecking=yes" ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/helloapi-upload/"
+          # The rsync command now uses the key from the .ssh directory.
+          rsync -az --delete -e "ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=yes" ./ "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/helloapi-upload/"
 
       - name: Run remote setup/deploy
         run: |
-          ssh -i key.pem -o StrictHostKeyChecking=yes ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} '\
+          # The ssh command also uses the key from the .ssh directory.
+          ssh -i ~/.ssh/key.pem -o StrictHostKeyChecking=yes ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} '\
             sudo mkdir -p /var/www/helloapi && \
             sudo chown -R $USER:$USER /var/www/helloapi && \
             rsync -a --delete --exclude ".git" --exclude ".github" --exclude "node_modules" ~/helloapi-upload/ /var/www/helloapi/ && \
